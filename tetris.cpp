@@ -23,6 +23,8 @@ typedef double f64;
 #define VISIT_HEIGHT 20
 #define GRID_SIZE 30
 #define HIGHLIGHT_TIME 0.5f
+#define ARRAY_COUNT(x) (sizeof(x) / sizeof((x)[0]))
+
 
 const f32 FRAMES_PER_DROP[] = {
     48,
@@ -88,11 +90,39 @@ const u8 TETRINO_3[] = {
     0, 3, 0
 };
 
+const u8 TETRINO_4[] = {
+    0, 4, 4,
+    4, 4, 0,
+    0, 0, 0
+};
+
+const u8 TETRINO_5[] = {
+    5, 5, 0,
+    0, 5, 0,
+    0, 0, 0,
+};
+
+const u8 TETRINO_6[] = {
+    6, 0, 0,
+    6, 6, 6,
+    0, 0, 0
+};
+
+const u8 TETRINO_7[] = {
+    0, 0, 7,
+    7, 7, 7,
+    0, 0, 0
+};
+
+
 const Tetrino TETRINOS[] = {
     tetrino(TETRINO_1, 4),
     tetrino(TETRINO_2, 2),
-    tetrino(TETRINO_3, 3)
-
+    tetrino(TETRINO_3, 3),
+    tetrino(TETRINO_4, 3),
+    tetrino(TETRINO_5, 3),
+    tetrino(TETRINO_6, 3),
+    tetrino(TETRINO_7, 3),
 };
 
 enum Game_Phase 
@@ -290,9 +320,18 @@ void merge_piece(Game_state *game)
     }
 }
 
+
+u8 random_int(u8 min, u8 max)
+{
+    u8 range = max - min;
+    return min + rand() % range;
+
+}
+
 void spawn_piece(Game_state *game)
 {
     game->piece = {};
+    game->piece.tetrino_index = random_int(0, ARRAY_COUNT(TETRINOS));
     game->piece.offset_col = WIDTH / 2;
 }
 
@@ -516,9 +555,23 @@ void draw_board(SDL_Renderer *renderer, const u8 *board, s32 width, s32 height, 
 
 void render_game(const Game_state *game, SDL_Renderer *renderer) 
 {
-    
+    Color highlight_color = color(0xFF, 0xFF, 0xFF, 0xFF);
     draw_board(renderer, game->board, WIDTH, HEIGHT, 0, 0);
     draw_piece(renderer, &game->piece, 0, 0);
+
+    if (game->phase == GAME_PHASE_LINE)
+    {
+        for (s32 row = 0; row < HEIGHT; ++row)
+        {
+            if (game->lines[row])
+            {
+                s32 x = 0;
+                s32 y = row * GRID_SIZE;
+                fill_rect(renderer, x, y, WIDTH * GRID_SIZE, GRID_SIZE, highlight_color);
+            }
+        }
+    }
+
 
 }
 
@@ -569,6 +622,12 @@ int main()
 
         s32 key_count;
         const u8 *key_states = SDL_GetKeyboardState(&key_count);
+
+
+        if (key_states[SDL_SCANCODE_ESCAPE])
+        {
+            quit = true;
+        }
 
         Input_State prev_input = input;
 
