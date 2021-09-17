@@ -5,6 +5,8 @@
 #include <cassert>
 
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
+
 
 
 typedef uint8_t u8;
@@ -24,7 +26,8 @@ typedef double f64;
 #define GRID_SIZE 30
 #define HIGHLIGHT_TIME 0.5f
 #define ARRAY_COUNT(x) (sizeof(x) / sizeof((x)[0]))
-
+#define GAMEOVER_ROW 0
+#define FONT_SIZE 38
 
 const f32 FRAMES_PER_DROP[] = {
     48,
@@ -128,7 +131,9 @@ const Tetrino TETRINOS[] = {
 enum Game_Phase 
 {
     GAME_PHASE_PLAY,
-    GAME_PHASE_LINE
+    GAME_PHASE_LINE,
+    GAME_PHASE_GAMEOVER,
+    GAME_PHASE_START
 };
 
 struct Piece_State 
@@ -176,6 +181,12 @@ struct Input_State
     s8 dspace;
 };
 
+enum Text_Align
+{
+    TEXT_ALIGN_LEFT,
+    TEXT_ALIGN_CENTER,
+    TEXT_ALIGN_RIGHT
+};
 
 u8 matrix_get(const u8 *values, s32 width, s32 row, s32 col) 
 {
@@ -213,6 +224,20 @@ u8 check_row_filled(const u8 *values, s32 width, s32 row)
     {
 
         if (!matrix_get(values, width, row, col))
+        {
+            return 0;
+        }
+
+    }
+    return 1;
+}
+
+u8 check_row_empty(const u8 *values, s32 width, s32 row)
+{
+    for (s32 col = 0; col < width; ++col)
+    {
+
+        if (matrix_get(values, width, row, col))
         {
             return 0;
         }
@@ -399,6 +424,33 @@ s32 get_lines_for_next_level(s32 start_level, s32 level)
 }
 
 
+void update_game_start(Game_state *game, const Input_State *input)
+{
+    if (input->dup)
+    {
+        ++game->start_level;
+    }
+
+    if (input->ddown && game->start_level > 0)
+    {
+        --game->start_level;
+    }
+    
+    
+    if (input->dspace)
+    {
+        game->phase = GAME_PHASE_PLAY;
+    }
+}
+
+void update_game_gameover(Game_state *game, const Input_State *input)
+{
+    if (input->dspace)
+    {
+        game->phase = GAME_PHASE_START;
+    }
+}
+
 void update_game_line(Game_state *game)
 {
     if (game->time >= game->highlight_end_time)
@@ -462,6 +514,12 @@ void update_game_play(Game_state *game, const Input_State *input)
         game->highlight_end_time = game->time + HIGHLIGHT_TIME;
     }
     
+    if (!check_row_empty(game->board, WIDTH, GAMEOVER_ROW))
+    {
+        game-> phase = GAME_PHASE_GAMEOVER;
+    }
+
+
 }
 
 void update_game(Game_state *game, const Input_State *input) {
@@ -490,6 +548,39 @@ void fill_rect(SDL_Renderer *renderer,
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
     SDL_RenderFillRect(renderer, &rect);
 }
+
+void draw_string(SDL_Renderer *renderer, TTF_Font *font, const char *text, s32 x, s32 y, Text_Align alignment, Color color)
+{
+
+    SDL_Color sdl_color = SDL_Color { color.r, color.g, color.b, color.a };
+    SDL_Surface *surface = TTF_RenderText_Solid(font, text, sdl_color);
+    SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_Rect rect;
+    rect.w = surface->w;
+    rect.h = surface->h;
+    rect.y = y;
+
+    switch (alignment)
+    {
+    case TEXT_ALIGN_LEFT:
+        rect.x = x;
+        break;
+
+    case TEXT_ALIGN_CENTER:
+        rect.x = x - surface->w / 2;
+        break;
+
+    case TEXT_ALIGN_RIGHT:
+        rect.x = x - surface->w;
+        break;
+    }
+
+    SDL_RenderCopy(renderer, texture, 0, &rect);
+    SDL_FreeSurface(surface);
+    SDL_DestroyTexture(texture);
+
+}
+
 
 void draw_cell(SDL_Renderer *renderer, 
                 s32 row, s32 col, u8 value,
@@ -553,7 +644,7 @@ void draw_board(SDL_Renderer *renderer, const u8 *board, s32 width, s32 height, 
 }
 
 
-void render_game(const Game_state *game, SDL_Renderer *renderer) 
+void render_game(const Game_state *game, SDL_Renderer *renderer, TTF_Font *font) 
 {
     Color highlight_color = color(0xFF, 0xFF, 0xFF, 0xFF);
     draw_board(renderer, game->board, WIDTH, HEIGHT, 0, 0);
@@ -572,6 +663,13 @@ void render_game(const Game_state *game, SDL_Renderer *renderer)
         }
     }
 
+    else if (game->phase == GAME_PHASE_GAMEOVER)
+    {
+        s32 x = WIDTH * GRID_SIZE / 2;
+        s32 y = HEIGHT * GRID_SIZE / 2;
+        draw_string(renderer, font, "GAME OVER", x, y, TEXT_ALIGN_CENTER, highlight_color);
+    }
+    draw_string(renderer, font, "TETRIS", 0, 0, TEXT_ALIGN_LEFT, highlight_color);
 
 }
 
@@ -583,6 +681,12 @@ int main()
     {
         return 1;
     }
+
+    if (TTF_Init() < 0)
+    {
+        return 2;
+    }
+
 
     SDL_Window *window = SDL_CreateWindow(
         "Tetris", 
@@ -596,7 +700,10 @@ int main()
         -1,
         SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     
-    
+    const char *font_name = "Novem.ttf";
+    TTF_Font *font = TTF_OpenFont(font_name, FONT_SIZE);
+
+
     Game_state game = {};
     Input_State input = {};
 
@@ -647,12 +754,12 @@ int main()
         SDL_RenderClear(renderer);
 
         update_game(&game, &input);
-        render_game(&game, renderer);
+        render_game(&game, renderer, font);
 
         SDL_RenderPresent(renderer);
 
     }
-    
+    TTF_CloseFont(font);
     SDL_DestroyRenderer(renderer);
     SDL_Quit();
 
