@@ -5,6 +5,7 @@ To play you need to use arrows keys:
   - up: rotate the piece
   - left/right: move the piece to the left/right
   - down: speed up the drop
+
 and the space for insta drop (place of the drop is indicated by the ghost block).
 To exit the game you can press the ESC button.
 When in the starting menu you can press up and down arrows to change the starting level.
