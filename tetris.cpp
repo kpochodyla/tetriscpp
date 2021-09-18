@@ -22,13 +22,12 @@ typedef double f64;
 
 #define WIDTH 10
 #define HEIGHT 22
-#define VISIT_HEIGHT 20
+#define VISIBLE_HEIGHT 20
 #define GRID_SIZE 30
 #define HIGHLIGHT_TIME 0.5f
 #define ARRAY_COUNT(x) (sizeof(x) / sizeof((x)[0]))
 #define GAMEOVER_ROW 0
-#define FONT_SIZE 38
-
+#define FONT_SIZE 30
 const f32 FRAMES_PER_DROP[] = {
     48,
     43,
@@ -101,7 +100,7 @@ const u8 TETRINO_4[] = {
 
 const u8 TETRINO_5[] = {
     5, 5, 0,
-    0, 5, 0,
+    0, 5, 5,
     0, 0, 0,
 };
 
@@ -353,14 +352,6 @@ u8 random_int(u8 min, u8 max)
 
 }
 
-void spawn_piece(Game_state *game)
-{
-    game->piece = {};
-    game->piece.tetrino_index = random_int(0, ARRAY_COUNT(TETRINOS));
-    game->piece.offset_col = WIDTH / 2;
-}
-
-
 f32 get_time_to_next_drop(s32 level)
 {
     if(level > 29)
@@ -369,6 +360,17 @@ f32 get_time_to_next_drop(s32 level)
     }
     return FRAMES_PER_DROP[level] * TARGET_SECONDS_PER_FRAME;
 }
+
+void spawn_piece(Game_state *game)
+{
+    game->piece = {};
+    game->piece.tetrino_index = random_int(0, ARRAY_COUNT(TETRINOS));
+    game->piece.offset_col = WIDTH / 2;
+    game->next_drop_time = game->time + get_time_to_next_drop(game->level);
+}
+
+
+
 
 bool soft_drop(Game_state *game)
 {
@@ -426,26 +428,31 @@ s32 get_lines_for_next_level(s32 start_level, s32 level)
 
 void update_game_start(Game_state *game, const Input_State *input)
 {
-    if (input->dup)
+    if (input->dup > 0)
     {
         ++game->start_level;
     }
 
-    if (input->ddown && game->start_level > 0)
+    if (input->ddown > 0 && game->start_level > 0)
     {
         --game->start_level;
     }
     
     
-    if (input->dspace)
+    if (input->dspace > 0)
     {
+        memset(game->board, 0, WIDTH * HEIGHT);
+        game->level = game->start_level;
+        game->line_count = 0;
+        game->points = 0;
+        spawn_piece(game);
         game->phase = GAME_PHASE_PLAY;
     }
 }
 
 void update_game_gameover(Game_state *game, const Input_State *input)
 {
-    if (input->dspace)
+    if (input->dspace > 0)
     {
         game->phase = GAME_PHASE_START;
     }
@@ -516,7 +523,7 @@ void update_game_play(Game_state *game, const Input_State *input)
     
     if (!check_row_empty(game->board, WIDTH, GAMEOVER_ROW))
     {
-        game-> phase = GAME_PHASE_GAMEOVER;
+        game->phase = GAME_PHASE_GAMEOVER;
     }
 
 
@@ -525,14 +532,36 @@ void update_game_play(Game_state *game, const Input_State *input)
 void update_game(Game_state *game, const Input_State *input) {
 
     switch(game->phase) 
-    {
+    {   
+        
+        case GAME_PHASE_START:
+            update_game_start(game, input);
+            break;
         case GAME_PHASE_PLAY:
             update_game_play(game, input);
             break;
         case GAME_PHASE_LINE:
             update_game_line(game);
             break;
+        
+        case GAME_PHASE_GAMEOVER:
+            update_game_gameover(game, input);
+            break;
+
     }
+}
+
+void draw_rect(SDL_Renderer *renderer,
+                s32 x, s32 y, s32 width, s32 height, Color color)
+{
+
+    SDL_Rect rect = {};
+    rect.x = x;
+    rect.y = y;
+    rect.w = width;
+    rect.h = height;
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_RenderDrawRect(renderer, &rect);
 }
 
 
@@ -584,7 +613,7 @@ void draw_string(SDL_Renderer *renderer, TTF_Font *font, const char *text, s32 x
 
 void draw_cell(SDL_Renderer *renderer, 
                 s32 row, s32 col, u8 value,
-                s32 offset_x, s32 offset_y) 
+                s32 offset_x, s32 offset_y, bool outline = false) 
 {
 
     Color base_color = BASE_COLORS[value];
@@ -594,6 +623,12 @@ void draw_cell(SDL_Renderer *renderer,
     s32 edge = GRID_SIZE / 8;
     s32 x = col * GRID_SIZE + offset_x;
     s32 y = row * GRID_SIZE + offset_y;
+
+    if (outline)
+    {
+        draw_rect(renderer, x, y, GRID_SIZE, GRID_SIZE, base_color);
+        return;
+    } 
 
     fill_rect(renderer, x, y, GRID_SIZE, GRID_SIZE, dark_color);
     fill_rect(renderer, x + edge, y, 
@@ -605,7 +640,7 @@ void draw_cell(SDL_Renderer *renderer,
 }
 
 void draw_piece(SDL_Renderer *renderer, const Piece_State *piece, 
-                s32 offset_x, s32 offset_y) 
+                s32 offset_x, s32 offset_y, bool outline = false) 
 {
 
     const Tetrino *tetrino = TETRINOS + piece->tetrino_index;
@@ -619,7 +654,7 @@ void draw_piece(SDL_Renderer *renderer, const Piece_State *piece,
                 draw_cell(renderer, 
                         row + piece->offset_row, 
                         col + piece->offset_col,
-                        value, offset_x, offset_y);
+                        value, offset_x, offset_y, outline);
                 
             }
         }
@@ -646,10 +681,26 @@ void draw_board(SDL_Renderer *renderer, const u8 *board, s32 width, s32 height, 
 
 void render_game(const Game_state *game, SDL_Renderer *renderer, TTF_Font *font) 
 {
-    Color highlight_color = color(0xFF, 0xFF, 0xFF, 0xFF);
-    draw_board(renderer, game->board, WIDTH, HEIGHT, 0, 0);
-    draw_piece(renderer, &game->piece, 0, 0);
+    s32 margin_y = 60;
+    char buffer[4096];
 
+    Color highlight_color = color(0xFF, 0xFF, 0xFF, 0xFF);
+    draw_board(renderer, game->board, WIDTH, HEIGHT, 0, margin_y);
+    
+    if (game->phase == GAME_PHASE_PLAY)
+    {
+        draw_piece(renderer, &game->piece, 0, margin_y);
+
+        Piece_State piece = game->piece;
+        while (check_piece_valid(&piece, game->board, WIDTH, HEIGHT))
+        {
+            piece.offset_row++;
+        }
+        --piece.offset_row;
+
+        draw_piece(renderer, &piece, 0, margin_y, true);
+
+    }
     if (game->phase == GAME_PHASE_LINE)
     {
         for (s32 row = 0; row < HEIGHT; ++row)
@@ -657,7 +708,7 @@ void render_game(const Game_state *game, SDL_Renderer *renderer, TTF_Font *font)
             if (game->lines[row])
             {
                 s32 x = 0;
-                s32 y = row * GRID_SIZE;
+                s32 y = row * GRID_SIZE + margin_y;
                 fill_rect(renderer, x, y, WIDTH * GRID_SIZE, GRID_SIZE, highlight_color);
             }
         }
@@ -666,10 +717,33 @@ void render_game(const Game_state *game, SDL_Renderer *renderer, TTF_Font *font)
     else if (game->phase == GAME_PHASE_GAMEOVER)
     {
         s32 x = WIDTH * GRID_SIZE / 2;
-        s32 y = HEIGHT * GRID_SIZE / 2;
+        s32 y = (HEIGHT * GRID_SIZE + margin_y) / 2;
         draw_string(renderer, font, "GAME OVER", x, y, TEXT_ALIGN_CENTER, highlight_color);
     }
-    draw_string(renderer, font, "TETRIS", 0, 0, TEXT_ALIGN_LEFT, highlight_color);
+    
+    else if (game->phase == GAME_PHASE_START)
+    {
+        s32 x = WIDTH * GRID_SIZE / 2;
+        s32 y = (HEIGHT * GRID_SIZE + margin_y) / 2;
+        draw_string(renderer, font, "PRESS START", x, y, TEXT_ALIGN_CENTER, highlight_color);
+        snprintf(buffer, sizeof(buffer), "STARTING LEVEL: %d", game->start_level);
+        draw_string(renderer, font, buffer, x, y + 30, TEXT_ALIGN_CENTER, highlight_color);
+    }
+
+    fill_rect(renderer, 0, margin_y, WIDTH * GRID_SIZE, (HEIGHT - VISIBLE_HEIGHT) * GRID_SIZE, color(0x00, 0x00, 0x00, 0x00));
+
+    snprintf(buffer, sizeof(buffer), "LEVEL: %d", game->level);
+    draw_string(renderer, font, buffer, 5, 0, TEXT_ALIGN_LEFT, highlight_color);
+    
+    snprintf(buffer, sizeof(buffer), "LINES: %d ", game->line_count);
+    draw_string(renderer, font, buffer, 5, 30, TEXT_ALIGN_LEFT, highlight_color);
+    
+    snprintf(buffer, sizeof(buffer), "POINTS: %d ", game->points);
+    draw_string(renderer, font, buffer, 5, 60, TEXT_ALIGN_LEFT, highlight_color);
+    
+    
+    
+    //draw_string(renderer, font, "TETRIS", 0, 0, TEXT_ALIGN_LEFT, highlight_color);
 
 }
 
@@ -692,7 +766,7 @@ int main()
         "Tetris", 
         SDL_WINDOWPOS_UNDEFINED, 
         SDL_WINDOWPOS_UNDEFINED, 
-        400, 
+        300, 
         720, 
         SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
     SDL_Renderer *renderer = SDL_CreateRenderer(
@@ -707,11 +781,8 @@ int main()
     Game_state game = {};
     Input_State input = {};
 
-    game.level = 0;
     game.start_level = 0;
-    game.phase = GAME_PHASE_PLAY;
-    game.next_drop_time = get_time_to_next_drop(game.level);
-    spawn_piece(&game);
+    game.phase = GAME_PHASE_START;
 
     bool quit = false;
     while (!quit) 
@@ -748,6 +819,7 @@ int main()
         input.dright = input.right - prev_input.right;
         input.dup = input.up - prev_input.up;
         input.ddown = input.down - prev_input.down;
+        input.dspace = input.space - prev_input.space;
         input.dspace = input.space - prev_input.space;
 
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
